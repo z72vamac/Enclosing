@@ -17,26 +17,28 @@ def _dedupe(points, tol):
 
 def iterative_cover(poly, R, h0=None, s0=None, max_iter=8,
                     solver="auto", time_limit=120, verbose=True,
-                    buffer_resolution=64, cand_method="hex"):
-    """Cubre poly con discos de radio R.
+                    buffer_resolution=64, cand_method="hex", shape="circle"):
+    """Cubre poly con discos de radio R (o cuadrados de semilado R).
 
     h0: paso de demanda inicial (defecto R/2). s0: paso de candidatos (defecto R/2).
+    shape: "circle" (euclidea) o "square" (ejes paralelos, norma infinito).
     Devuelve dict con centers, k, demands, candidates, bounds, history, check.
     """
     if h0 is None:
         h0 = R / 2.0
     if s0 is None:
         s0 = R / 2.0
-    bounds = lower_bounds(poly, R)
+    bounds = lower_bounds(poly, R, shape=shape)
     s = float(s0)
     h_new = float(h0)
-    candidates = candidate_centers(poly, R, s, method=cand_method)
+    candidates = candidate_centers(poly, R, s, method=cand_method, shape=shape)
     demands = demand_points(poly, h0)
     history = []
     result = None
 
     for it in range(int(max_iter)):
-        cover_lists, uncovered_idx = build_coverage(demands, candidates, R)
+        cover_lists, uncovered_idx = build_coverage(demands, candidates, R,
+                                                    shape=shape)
         if uncovered_idx:
             # candidatos demasiado gruesos: densificar y reintentar
             if s < R / 8.0:
@@ -44,7 +46,8 @@ def iterative_cover(poly, R, h0=None, s0=None, max_iter=8,
                                 "n_dem": len(demands), "n_cand": len(candidates)})
                 break
             s = s / 2.0
-            candidates = candidate_centers(poly, R, s, method=cand_method)
+            candidates = candidate_centers(poly, R, s, method=cand_method,
+                                           shape=shape)
             if verbose:
                 print(f"[iter {it}] {len(uncovered_idx)} demandas sin candidato: "
                       f"densifico candidatos a s={s:.4f} ({len(candidates)}).")
@@ -58,7 +61,8 @@ def iterative_cover(poly, R, h0=None, s0=None, max_iter=8,
                             "n_dem": len(demands), "n_cand": len(candidates)})
             break
         centers = candidates[np.array(sol["selected"], dtype=int)]
-        chk = check_coverage(poly, centers, R, buffer_resolution=buffer_resolution)
+        chk = check_coverage(poly, centers, R,
+                             buffer_resolution=buffer_resolution, shape=shape)
         history.append({"iter": it, "k": len(centers), "n_dem": len(demands),
                         "n_cand": len(candidates), "method": sol["method"],
                         "uncovered_area": chk["uncovered_area"],

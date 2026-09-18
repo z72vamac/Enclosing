@@ -9,6 +9,7 @@ Dos piezas:
 import numpy as np
 from scipy.spatial import cKDTree
 from scipy.optimize import minimize
+from .geometry import shape_p
 from .tsp import dist_matrix, tour_length, two_opt, solve_tsp_heuristic
 
 
@@ -195,14 +196,14 @@ def solve_joint_mtz(candidates, cover_lists, depot_idx=0, time_limit=300,
 
 # ---------------- alternante ----------------
 
-def _assign_demands(demands, centers, R):
+def _assign_demands(demands, centers, R, shape="circle"):
     """Cada demanda al centro mas cercano de entre los que la cubren."""
     dem = np.asarray(demands, dtype=float)
     C = np.asarray(centers, dtype=float)
     tree = cKDTree(C)
     asg = [[] for _ in range(len(C))]
     for p in dem:
-        idxs = tree.query_ball_point(p, r=R + 1e-9)
+        idxs = tree.query_ball_point(p, r=R + 1e-9, p=shape_p(shape))
         if not idxs:
             return None  # demanda descubierta
         j = min(idxs, key=lambda j: float(np.linalg.norm(C[j] - p)))
@@ -210,17 +211,20 @@ def _assign_demands(demands, centers, R):
     return [np.array(a) if len(a) else np.zeros((0, 2)) for a in asg]
 
 
-def _demands_covered(demands, centers, R):
+def _demands_covered(demands, centers, R, shape="circle"):
     if len(centers) == 0:
         return len(demands) == 0
     tree = cKDTree(np.asarray(centers, dtype=float))
-    n = tree.query_ball_point(np.asarray(demands, dtype=float), r=R + 1e-9)
+    n = tree.query_ball_point(np.asarray(demands, dtype=float), r=R + 1e-9,
+                              p=shape_p(shape))
     return all(len(v) > 0 for v in n)
 
 
-def _best_position(a, b, pts, R, x0, max_step=None):
+def _best_position(a, b, pts, R, x0, max_step=None, shape="circle"):
     """min |p-a|+|p-b| s.a. |p-q|<=R (SLSQP). Si falla, devuelve x0.
 
+    shape="square": la cobertura es |p-q|_inf <= R, o sea restricciones de
+    caja lineales en p (orientacion fija, sin no linealidad geometrica).
     max_step: radio de confianza alrededor de x0 (preserva cobertura
     continua entre rondas; la verificacion por ronda decide).
     """
@@ -228,6 +232,7 @@ def _best_position(a, b, pts, R, x0, max_step=None):
     b = np.asarray(b, dtype=float)
     P = np.asarray(pts, dtype=float)
     x0 = np.asarray(x0, dtype=float)
+    ord_ = shape_p(shape)
 
     def fun(p):
         return float(np.linalg.norm(p - a) + np.linalg.norm(p - b))
@@ -242,7 +247,7 @@ def _best_position(a, b, pts, R, x0, max_step=None):
         return g
 
     cons = [{"type": "ineq",
-             "fun": (lambda q: (lambda p: float(R - np.linalg.norm(p - q))))(q)}
+             "fun": (lambda q: (lambda p: float(R - np.linalg.norm(p - q, ord=ord_))))(q)}
             for q in P]
     if max_step is not None:
         cons.append({"type": "ineq",
@@ -254,20 +259,22 @@ def _best_position(a, b, pts, R, x0, max_step=None):
     except Exception:
         return x0
     if (res.success and fun(res.x) < fun(x0) - 1e-9
-            and all(float(np.linalg.norm(res.x - q)) <= R + 1e-7 for q in P)):
+            and all(float(np.linalg.norm(res.x - q, ord=ord_)) <= R + 1e-7
+                    for q in P)):
         return res.x
     return x0
 
 
 def alternating_refine(poly, R, centers, tour, demands, n_rounds=5,
                        try_drops=True, verbose=True, verify_tol=1e-6,
-                       max_step=None):
+                       max_step=None, shape="circle"):
     """Fija orden -> mueve centros (cobertura preservada) -> re-opt tour.
 
     Tras cada ronda verifica cobertura CONTINUA; si se rompe, revierte a la
     mejor ronda cubierta. `demands` debe ser una malla DENSA de guarda
     (p.ej. h=R/4): los movimientos solo preservan lo que la demanda impone.
     max_step (defecto R/8): radio de confianza por ronda.
+    shape: "circle" o "square" (semilado R, restricciones de caja lineales).
     """
     from .verify import check_coverage
     if max_step is None:
@@ -291,12 +298,13 @@ def alternating_refine(poly, R, centers, tour, demands, n_rounds=5,
                 if len(C) <= 2:
                     break
                 keep = [i for i in range(len(C)) if i != v]
-                if _demands_covered(dem, [C[i] for i in keep], R):
+                if _demands_covered(dem, [C[i] for i in keep], R,
+                                    shape=shape):
                     # remapea tour
                     t = [i if i < v else i - 1 for i in t if i != v]
                     C.pop(v)
         # 2. re-asigna y mueve cada centro hacia su segmento del tour
-        asg = _assign_demands(dem, np.array(C), R)
+        asg = _assign_demands(dem, np.array(C), R, shape=shape)
         if asg is None:
             if verbose:
                 print(f"[alt {rd}] demanda descubierta, paro")
@@ -308,13 +316,13 @@ def alternating_refine(poly, R, centers, tour, demands, n_rounds=5,
             prev = arr[t[pos - 1]]
             nxt = arr[t[(pos + 1) % len(t)]]
             arr[node] = _best_position(prev, nxt, asg[node], R, arr[node],
-                                       max_step=max_step)
+                                       max_step=max_step, shape=shape)
         C = [r for r in arr]
         # 3. re-optimiza el orden
         D = dist_matrix(np.array(C))
         t = two_opt(t, D)
         L = tour_length(np.array(C), t, closed=True)
-        chk_rd = check_coverage(poly, np.array(C), R)
+        chk_rd = check_coverage(poly, np.array(C), R, shape=shape)
         ok = bool(chk_rd["covered"]
                   or chk_rd["uncovered_ratio"] < verify_tol)
         hist.append({"round": rd, "k": len(C), "length": L,
@@ -332,7 +340,7 @@ def alternating_refine(poly, R, centers, tour, demands, n_rounds=5,
             C = [r for r in best["centers"]]
             t = list(best["tour"])
             break
-    chk = check_coverage(poly, best["centers"], R)
+    chk = check_coverage(poly, best["centers"], R, shape=shape)
     return {"centers": best["centers"], "tour": best["tour"],
             "length": best["length"], "k": best["k"],
             "history": hist, "check": chk}
@@ -454,12 +462,15 @@ def _cell_constraint_points(cell, max_pts=24):
 
 
 def voronoi_refine(poly, R, centers, tour, n_rounds=6, max_step=None,
-                   margin=1e-6, verbose=True, verify_tol=1e-6):
+                   margin=1e-6, verbose=True, verify_tol=1e-6,
+                   shape="circle"):
     """Mueve centros en continuo minimizando el tour, cobertura preservada.
 
     Cada ronda: celdas de Voronoi cap P -> cada centro se mueve (SLSQP)
     para acercarse a su segmento del tour sin soltar ningun vertice de su
     celda -> re-opt 2-opt -> verificacion continua (revierte si rompe).
+    shape="square": las cajas son convexas, asi que cubrir los vertices de
+    la celda (convexa si P es convexo) equivale a cubrirla entera.
     """
     C = np.asarray(centers, dtype=float)
     t = list(tour)
@@ -490,7 +501,7 @@ def voronoi_refine(poly, R, centers, tour, n_rounds=6, max_step=None,
             prev = arr[t[pos - 1]]
             nxt = arr[t[(pos + 1) % len(t)]]
             new = _best_position(prev, nxt, pts, R - margin, arr[node],
-                                 max_step=max_step)
+                                 max_step=max_step, shape=shape)
             if float(np.linalg.norm(new - arr[node])) > 1e-9:
                 moved += 1
             arr[node] = new
@@ -499,7 +510,7 @@ def voronoi_refine(poly, R, centers, tour, n_rounds=6, max_step=None,
         t = two_opt(t, D)
         L = tour_length(C, t, closed=True)
         from .verify import check_coverage
-        chk = check_coverage(poly, C, R)
+        chk = check_coverage(poly, C, R, shape=shape)
         ok = bool(chk["covered"] or chk["uncovered_ratio"] < verify_tol)
         hist.append({"round": rd, "k": len(C), "length": L, "moved": moved,
                      "covered": ok, "uncovered_ratio": chk["uncovered_ratio"]})
@@ -517,7 +528,7 @@ def voronoi_refine(poly, R, centers, tour, n_rounds=6, max_step=None,
                 print(f"[vor {rd+1}] revierto")
             break
     from .verify import check_coverage as _cc
-    chk = _cc(poly, best["centers"], R)
+    chk = _cc(poly, best["centers"], R, shape=shape)
     return {"centers": best["centers"], "tour": best["tour"],
             "length": best["length"], "k": best["k"],
             "history": hist, "check": chk}
@@ -541,12 +552,13 @@ def lawnmower_backbone(poly, spacing):
 
 def backbone_cover(poly, R, demands, candidates, lambdas=(0.0, 0.5, 2.0, 8.0),
                    solver="auto", time_limit=120, tsp_time_limit=60,
-                   verbose=True):
+                   verbose=True, shape="circle"):
     """Barrido conjunto aproximado: coste_j = 1 + lam*dist(j, backbone).
 
     lam=0 reproduce el dos-fases (min k). lam>0 alinea centros con la
     serpentina -> tours mas cortos a costa de (quiza) mas k.
     Devuelve el mejor por longitud de tour entre los verificados.
+    shape: "circle" o "square" (cobertura y verificacion con cuadrados).
     """
     from shapely.geometry import Point
     from .cover import build_coverage
@@ -555,7 +567,7 @@ def backbone_cover(poly, R, demands, candidates, lambdas=(0.0, 0.5, 2.0, 8.0),
     from .verify import check_coverage
     dem = np.asarray(demands, dtype=float)
     cand = np.asarray(candidates, dtype=float)
-    cover_lists, infeas = build_coverage(dem, cand, R)
+    cover_lists, infeas = build_coverage(dem, cand, R, shape=shape)
     if infeas:
         return {"feasible": False,
                 "message": f"{len(infeas)} demandas sin candidato"}
@@ -574,7 +586,7 @@ def backbone_cover(poly, R, demands, candidates, lambdas=(0.0, 0.5, 2.0, 8.0),
         sel = np.array(sol["selected"], dtype=int)
         t = solve_tour(cand[sel], method="auto",
                        time_limit=tsp_time_limit)
-        chk = check_coverage(poly, cand[sel], R)
+        chk = check_coverage(poly, cand[sel], R, shape=shape)
         row = {"lam": lam, "k": len(sel), "length": t["length"],
                "method": t["method"], "covered": chk["covered"],
                "ratio": chk["uncovered_ratio"], "selected": sel,

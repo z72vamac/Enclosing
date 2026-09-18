@@ -1,6 +1,6 @@
 """Muestreo de puntos de demanda y centros candidatos."""
 import numpy as np
-from shapely.geometry import Point
+from shapely.geometry import Point, box
 from shapely.prepared import prep
 from .geometry import bounds_expanded
 
@@ -84,8 +84,13 @@ def demand_points(poly, h, hb=None, method="square"):
     return allp[np.sort(idx)]
 
 
-def candidate_centers(poly, R, spacing, method="hex"):
-    """Candidatos en bbox expandido por R, podados a dist(poly) <= R."""
+def candidate_centers(poly, R, spacing, method="hex", shape="circle"):
+    """Candidatos en bbox expandido por R, podados a dist(poly) <= R.
+
+    shape="circle": distancia euclidea; el candidato cubre lo que su disco toca.
+    shape="square": R es el semilado (orientacion fija); se conserva el
+    candidato si su cuadrado (norma infinito) intersecta a poly.
+    """
     x0, y0, x1, y1 = bounds_expanded(poly, R)
     if method == "hex":
         grid = _hex_lattice(x0, y0, x1, y1, spacing)
@@ -93,6 +98,13 @@ def candidate_centers(poly, R, spacing, method="hex"):
         grid = _square_lattice(x0, y0, x1, y1, spacing)
     if len(grid) == 0:
         return grid
+    if shape == "square":
+        pre = prep(poly)
+        mask = np.array([pre.intersects(box(x - R, y - R, x + R, y + R))
+                         for x, y in grid], dtype=bool)
+        return grid[mask]
+    if shape != "circle":
+        raise ValueError(f"shape desconocido: {shape!r}")
     # poda: descarta candidatos que no tocan P expandido por R
     buf = poly.buffer(R + 1e-9)
     pre = prep(buf)

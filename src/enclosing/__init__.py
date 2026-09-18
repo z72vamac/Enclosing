@@ -1,4 +1,9 @@
-"""Enclosing: cobertura de regiones planas con circulos iguales (caso 1)."""
+"""Enclosing: cobertura de regiones planas con piezas iguales (caso 1).
+
+shape="circle": discos de radio R (euclidea).
+shape="square": cuadrados ejes-paralelos de semilado R (norma infinito,
+verificacion exacta, sin no linealidad geometrica).
+"""
 from .geometry import make_polygon, lower_bounds
 from .sampling import demand_points, candidate_centers
 from .cover import build_coverage
