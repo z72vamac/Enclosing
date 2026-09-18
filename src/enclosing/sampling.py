@@ -84,18 +84,50 @@ def demand_points(poly, h, hb=None, method="square"):
     return allp[np.sort(idx)]
 
 
-def candidate_centers(poly, R, spacing, method="hex", shape="circle"):
+def _structural_seeds(poly, R):
+    """Posiciones 'bloqueadas' del argumento de deslizamiento.
+
+    En un optimo con cuadrados ejes-paralelos, cada cuadrado puede
+    deslizarse hasta que su borde toca un vertice (cx = vx +/- s,
+    cy = vy +/- s) o su esquina una arista. Estas 4 combinaciones por
+    vertice (exterior + huecos) contienen esos bloqueos por vertice.
+    """
+    pts = []
+    for ring in [poly.exterior, *poly.interiors]:
+        for vx, vy in list(ring.coords)[:-1]:  # sin duplicar el cierre
+            for cx in (vx - R, vx + R):
+                for cy in (vy - R, vy + R):
+                    pts.append((cx, cy))
+    if not pts:
+        return np.zeros((0, 2))
+    return np.array(pts, dtype=float)
+
+
+def candidate_centers(poly, R, spacing, method="hex", shape="circle",
+                      seed="grid"):
     """Candidatos en bbox expandido por R, podados a dist(poly) <= R.
 
     shape="circle": distancia euclidea; el candidato cubre lo que su disco toca.
     shape="square": R es el semilado (orientacion fija); se conserva el
     candidato si su cuadrado (norma infinito) intersecta a poly.
+    seed="grid": solo malla. seed="structural": malla + posiciones
+    bloqueadas por vertice (util con shape="square": los optimos viven ahi).
     """
     x0, y0, x1, y1 = bounds_expanded(poly, R)
     if method == "hex":
         grid = _hex_lattice(x0, y0, x1, y1, spacing)
     else:
         grid = _square_lattice(x0, y0, x1, y1, spacing)
+    if seed == "structural":
+        extra = _structural_seeds(poly, R)
+        grid = np.vstack([grid, extra]) if len(grid) else extra
+        if len(grid):
+            key = np.round(grid / (min(float(spacing), float(R)) / 4.0))
+            key = key.astype(np.int64)
+            _, idx = np.unique(key, axis=0, return_index=True)
+            grid = grid[np.sort(idx)]
+    elif seed != "grid":
+        raise ValueError(f"seed desconocido: {seed!r}")
     if len(grid) == 0:
         return grid
     if shape == "square":

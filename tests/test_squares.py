@@ -74,3 +74,22 @@ def test_square_l_shape():
     assert res is not None
     assert res["check"]["covered"], res["history"]
     assert res["k"] >= res["bounds"]["area_bound"]
+
+
+def test_structural_seeds():
+    # el vertice (0,0) genera, entre otras, la semilla (-1,-1) y (1,1);
+    # (-1,-1) toca al poligono con su cuadrado y debe conservarse
+    poly = make_polygon([(0, 0), (2, 0), (2, 2), (0, 2)])
+    cand = candidate_centers(poly, 1.0, 1.0, method="square",
+                             shape="square", seed="structural")
+    assert any(np.allclose(c, [-1.0, -1.0]) for c in cand)
+    grid = candidate_centers(poly, 1.0, 1.0, method="square",
+                             shape="square", seed="grid")
+    assert len(cand) >= len(grid)
+    # con semillas estructurales el 2x2 s=1 se cubre con k pequeno y exacto
+    res = iterative_cover(poly, 1.0, h0=0.5, s0=1.0, max_iter=4,
+                          solver="auto", verbose=False, shape="square",
+                          seed="structural")
+    assert res["check"]["covered"]
+    assert res["check"]["uncovered_ratio"] == 0.0
+    assert res["k"] <= 4

@@ -17,11 +17,13 @@ def _dedupe(points, tol):
 
 def iterative_cover(poly, R, h0=None, s0=None, max_iter=8,
                     solver="auto", time_limit=120, verbose=True,
-                    buffer_resolution=64, cand_method="hex", shape="circle"):
+                    buffer_resolution=64, cand_method="hex", shape="circle",
+                    seed="grid"):
     """Cubre poly con discos de radio R (o cuadrados de semilado R).
 
     h0: paso de demanda inicial (defecto R/2). s0: paso de candidatos (defecto R/2).
     shape: "circle" (euclidea) o "square" (ejes paralelos, norma infinito).
+    seed: "grid" o "structural" (anade posiciones bloqueadas por vertice).
     Devuelve dict con centers, k, demands, candidates, bounds, history, check.
     """
     if h0 is None:
@@ -31,7 +33,8 @@ def iterative_cover(poly, R, h0=None, s0=None, max_iter=8,
     bounds = lower_bounds(poly, R, shape=shape)
     s = float(s0)
     h_new = float(h0)
-    candidates = candidate_centers(poly, R, s, method=cand_method, shape=shape)
+    candidates = candidate_centers(poly, R, s, method=cand_method, shape=shape,
+                                   seed=seed)
     demands = demand_points(poly, h0)
     history = []
     result = None
@@ -47,7 +50,7 @@ def iterative_cover(poly, R, h0=None, s0=None, max_iter=8,
                 break
             s = s / 2.0
             candidates = candidate_centers(poly, R, s, method=cand_method,
-                                           shape=shape)
+                                           shape=shape, seed=seed)
             if verbose:
                 print(f"[iter {it}] {len(uncovered_idx)} demandas sin candidato: "
                       f"densifico candidatos a s={s:.4f} ({len(candidates)}).")
